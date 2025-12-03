@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package mamad.v1;
+
+// Minimal EmptyRequest type
+message EmptyRequest {}
+
+// Response message for testing
+message StringResponse {
+  string value = 1;
+}
+
+// Service definition (Wire-compatible)
+service MamadService {
+  rpc functionName(EmptyRequest) returns (StringResponse);
+  rpc functionName2(EmptyRequest) returns (StringResponse);
+}
