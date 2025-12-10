@@ -3,5 +3,7 @@ plugins {
 }
 rootProject.name = "KspPlayground-minimal"
 include("tapsi-grpc-processor")
-include("demo")
+include("tapsi-featuretoggle-processor")
 include("tapsi-grpc-annotations")
+include("tapsi-featuretoggle-annotations")
+include("demo")

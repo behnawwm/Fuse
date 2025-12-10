@@ -1,6 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.2.0"
-    id("com.squareup.wire") version "5.4.0" apply false
+    kotlin("jvm")
 }
 
 group = "com.behnawwm"

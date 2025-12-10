@@ -17,9 +17,8 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.writeTo
-import kotlin.reflect.KClass
 
-class TapsiGrpcProcessor(
+class TapsiFeatureToggleProcessor(
     private val environment: SymbolProcessorEnvironment
 ) : SymbolProcessor {
 
