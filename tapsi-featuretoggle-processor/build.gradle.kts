@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm")
     id("com.google.devtools.ksp") version "2.2.0-2.0.2"
+    kotlin("plugin.serialization")
 }
 
 group = "com.behnawwm"
@@ -16,6 +17,7 @@ dependencies {
     implementation("com.google.devtools.ksp:symbol-processing-api:2.2.0-2.0.2")
     implementation("com.squareup:kotlinpoet:1.14.2")
     implementation("com.squareup:kotlinpoet-ksp:1.14.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 }
 
 tasks.test {
