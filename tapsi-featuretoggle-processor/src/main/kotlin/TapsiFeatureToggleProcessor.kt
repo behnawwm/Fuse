@@ -1,36 +1,16 @@
-import com.google.devtools.ksp.processing.Dependencies
-import com.google.devtools.ksp.processing.Resolver
-import com.google.devtools.ksp.processing.SymbolProcessor
-import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
-import com.google.devtools.ksp.symbol.KSAnnotated
-import com.google.devtools.ksp.symbol.KSClassDeclaration
-import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.FunSpec
-import com.squareup.kotlinpoet.KModifier
-import com.squareup.kotlinpoet.PropertySpec
-import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.ksp.writeTo
-import com.google.devtools.ksp.processing.CodeGenerator
-import com.google.devtools.ksp.processing.KSPLogger
-import com.google.devtools.ksp.symbol.ClassKind
-import com.google.devtools.ksp.symbol.Modifier
+import com.google.devtools.ksp.processing.*
+import com.google.devtools.ksp.symbol.*
 import com.google.devtools.ksp.validate
-import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.CodeBlock
-import com.squareup.kotlinpoet.ParameterSpec
-import com.squareup.kotlinpoet.TypeSpec.Companion.enumBuilder
-import com.squareup.kotlinpoet.ksp.toTypeName
+import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.ksp.writeTo
 import kotlinx.serialization.Serializable
 
 class TapsiFeatureToggleProcessor(
-    environment: SymbolProcessorEnvironment
+    private val environment: SymbolProcessorEnvironment
 ) : SymbolProcessor {
 
     private val codeGenerator: CodeGenerator = environment.codeGenerator
     private val logger: KSPLogger = environment.logger
-
-    // We aggregate everything in one round
     private var processed = false
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
@@ -42,141 +22,143 @@ class TapsiFeatureToggleProcessor(
 
         val features = validSymbols
             .filterIsInstance<KSClassDeclaration>()
-            .mapNotNull { it.toFeatureMeta() }
+            .mapNotNull { processFeatureClass(it) }
 
         if (features.isEmpty()) {
             processed = true
             return invalidSymbols
         }
 
-        // Decide package for generated files (use package of first feature, or fallback)
-        val mainPackage = features.map { it.packageName }.distinct().singleOrNull()
-            ?: features.first().packageName
+        val mainPackage = features.first().packageName
 
-        generateFeatureEnum(mainPackage, features)
-        generateFeatureDtos(mainPackage, features)
-        generateFeatureDomainModels(mainPackage, features)
-        generateAppConfig(mainPackage, features)
-        generateMappers(mainPackage, features)
-        generateUseCases(mainPackage, features)
+        generateAllFiles(mainPackage, features)
 
         processed = true
         return invalidSymbols
     }
 
-    private fun KSClassDeclaration.toFeatureMeta(): FeatureMeta? {
-        val annotation = annotations.firstOrNull {
-            it.annotationType.resolve().declaration.qualifiedName?.asString() ==
-                    TapsiFeatureToggle::class.qualifiedName
+    private fun processFeatureClass(declaration: KSClassDeclaration): FeatureMeta? {
+        if (!KspUtils.validateDataClass(declaration, logger)) {
+            return null
+        }
+
+        val annotation = declaration.annotations.firstOrNull {
+            it.annotationType.resolve().declaration.qualifiedName?.asString() == 
+                TapsiFeatureToggle::class.qualifiedName
         } ?: return null
 
-        val featureName = simpleName.asString()
-
-        val key = annotation.arguments.firstOrNull { it.name?.asString() == "key" }?.value as? String
-            ?: run {
-                logger.error("@TapsiFeatureToggle: 'key' is required", this)
+        val className = declaration.simpleName.asString()
+        val featureName = KspUtils.extractFeatureName(className)
+        val packageName = declaration.packageName.asString()
+        
+        val title = annotation.arguments
+            .firstOrNull { it.name?.asString() == "title" }
+            ?.value as? String ?: run {
+                logger.error("@TapsiFeatureToggle: 'title' is required", declaration)
                 return null
             }
 
-        val title = annotation.arguments.firstOrNull { it.name?.asString() == "title" }?.value as? String
-            ?: run {
-                logger.error("@TapsiFeatureToggle: 'title' is required", this)
-                return null
-            }
+        val naming = extractNaming(annotation, featureName)
+        
+        // First collect nested configs, then fields (so we can resolve nested types properly)
+        val nestedConfigs = KspUtils.collectNestedConfigs(declaration, logger)
+        val fields = KspUtils.collectFields(declaration, nestedConfigs, logger)
+        
+        val enabledField = fields.firstOrNull { it.name == "enabled" }
+        val enabledDefault = enabledField?.defaultValue?.toBoolean() ?: false
 
-        val defaultEnabled = annotation.arguments
-            .firstOrNull { it.name?.asString() == "defaultEnabled" }
-            ?.value as? Boolean
-            ?: false
+        return FeatureMeta(
+            packageName = packageName,
+            className = className,
+            featureName = featureName,
+            title = title,
+            enabledDefault = enabledDefault,
+            fields = fields,
+            nestedConfigs = nestedConfigs,
+            containingFile = declaration.containingFile!!,
+            dtoName = naming.dtoName,
+            domainName = naming.domainName,
+            enumName = naming.enumName
+        )
+    }
 
+    private fun extractNaming(annotation: KSAnnotation, featureName: String): NamingConfig {
         val dtoName = annotation.arguments
             .firstOrNull { it.name?.asString() == "dtoName" }
             ?.value as? String
-            ?: "${featureName}ConfigDto"
 
         val domainName = annotation.arguments
             .firstOrNull { it.name?.asString() == "domainName" }
             ?.value as? String
-            ?: "${featureName}ConfigDto"
 
         val enumName = annotation.arguments
             .firstOrNull { it.name?.asString() == "enumName" }
             ?.value as? String
-            ?: "${featureName}ConfigDto"
 
-        val payloadFields = collectPayloadFields(this)
-
-        val pkg = packageName.asString()
-        val name = simpleName.asString()
-        val file = containingFile ?: run {
-            logger.error("No containing file for $name", this)
-            return null
-        }
-
-        return FeatureMeta(
-            packageName = pkg,
-            featureName = name,
-            key = key,
-            title = title,
-            defaultEnabled = defaultEnabled,
-            payloadFields = payloadFields,
-            containingFile = file,
-            dtoName = dtoName,
-            domainName = domainName,
-            enumName = enumName,
+        return NamingConfig(
+            dtoName = dtoName?.takeIf { it.isNotEmpty() } ?: "${featureName}ConfigDto",
+            domainName = domainName?.takeIf { it.isNotEmpty() } ?: "${featureName}Config",
+            enumName = enumName?.takeIf { it.isNotEmpty() } ?: featureName
         )
     }
 
-    /**
-     * For a data class with primary constructor params, use them as payload fields.
-     * For interfaces or classes without primary constructor → no payload.
-     */
-    private fun collectPayloadFields(declaration: KSClassDeclaration): List<FeatureField> {
-        if (declaration.classKind != ClassKind.CLASS && declaration.classKind != ClassKind.INTERFACE) {
-            return emptyList()
+    private fun generateAllFiles(packageName: String, features: List<FeatureMeta>) {
+        // Generate individual feature files
+        features.forEach { feature ->
+            generateFeatureDto(packageName, feature)
+            generateFeatureDomain(packageName, feature)
+            generateNestedDomains(packageName, feature)
         }
-
-        val primaryCtor = declaration.primaryConstructor ?: return emptyList()
-
-        return primaryCtor.parameters
-            .filter { it.isVal || it.isVar || true } // accept them even if not val/var to be lenient
-            .mapNotNull { param ->
-                val name = param.name?.asString()
-                val type = param.type
-                if (name != null) {
-                    FeatureField(
-                        name = name,
-                        typeName = type.toTypeName()
-                    )
-                } else null
-            }
+        
+        // Generate aggregate files
+        generateFeatureEnum(packageName, features)
+        generateAppConfig(packageName, features)
+        generateMappers(packageName, features)
     }
 
-    // region Enum generation
+    private fun generateFeatureDto(packageName: String, feature: FeatureMeta) {
+        val dtoType = CodeGenerators.generateNullableDto(feature)
+        
+        val file = FileSpec.builder(packageName, feature.dtoName)
+            .addType(dtoType)
+            .build()
 
-    private fun generateFeatureEnum(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
-        val enumBuilder = enumBuilder("FeatureToggles")
-            .addKdoc(
-                "Generated by TapsiFeatureToggle KSP Processor.\n" +
-                        "Do not edit manually.\n"
-            )
+        file.writeTo(codeGenerator, Dependencies(false, feature.containingFile))
+    }
+
+    private fun generateFeatureDomain(packageName: String, feature: FeatureMeta) {
+        val domainType = CodeGenerators.generateDomainModel(feature)
+        
+        val file = FileSpec.builder(packageName, feature.domainName)
+            .addType(domainType)
+            .build()
+
+        file.writeTo(codeGenerator, Dependencies(false, feature.containingFile))
+    }
+
+    private fun generateNestedDomains(packageName: String, feature: FeatureMeta) {
+        feature.nestedConfigs.forEach { nested ->
+            val domainType = CodeGenerators.generateNestedDomainModel(nested)
+            val fileName = "${nested.className}Config"
+            
+            val file = FileSpec.builder(packageName, fileName)
+                .addType(domainType)
+                .build()
+
+            file.writeTo(codeGenerator, Dependencies(false, feature.containingFile))
+        }
+    }
+
+    private fun generateFeatureEnum(packageName: String, features: List<FeatureMeta>) {
+        val enumBuilder = TypeSpec.enumBuilder("FeatureToggles")
             .primaryConstructor(
                 FunSpec.constructorBuilder()
                     .addParameter("title", String::class)
-                    .addParameter("defaultEnabled", Boolean::class)
                     .build()
             )
             .addProperty(
                 PropertySpec.builder("title", String::class)
                     .initializer("title")
-                    .build()
-            )
-            .addProperty(
-                PropertySpec.builder("defaultEnabled", Boolean::class)
-                    .initializer("defaultEnabled")
                     .build()
             )
 
@@ -185,385 +167,120 @@ class TapsiFeatureToggleProcessor(
                 feature.enumName,
                 TypeSpec.anonymousClassBuilder()
                     .addSuperclassConstructorParameter("%S", feature.title)
-                    .addSuperclassConstructorParameter("%L", feature.defaultEnabled)
                     .build()
             )
         }
 
-        enumBuilder.addFunction(
-            FunSpec.builder("enabled")
-                .returns(Boolean::class)
-                .addStatement("return defaultEnabled")
-                .build()
-        )
-
-        val file = FileSpec.builder(pkg, "FeatureToggles")
+        val file = FileSpec.builder(packageName, "FeatureToggles")
             .addType(enumBuilder.build())
             .build()
 
-        val deps = Dependencies(
-            aggregating = true,
-            *features.map { it.containingFile }.toTypedArray()
-        )
+        val deps = Dependencies(true, *features.map { it.containingFile }.toTypedArray())
         file.writeTo(codeGenerator, deps)
     }
 
-    // endregion
+    private fun generateAppConfig(packageName: String, features: List<FeatureMeta>) {
+        // AppConfigDto (nullable)
+        val appConfigDtoBuilder = TypeSpec.classBuilder("AppConfigDto")
+            .addAnnotation(Serializable::class)
+            .addModifiers(KModifier.DATA)
 
-    // region Feature DTOs
-
-    private fun generateFeatureDtos(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
-
-        val serialNameClass = ClassName("kotlinx.serialization", "SerialName")
+        val dtoCtorBuilder = FunSpec.constructorBuilder()
+        val dtoProperties = mutableListOf<PropertySpec>()
 
         features.forEach { feature ->
-            val dtoName = feature.dtoName
-
-            val ctorBuilder = FunSpec.constructorBuilder()
-            val props = mutableListOf<PropertySpec>()
-
-            // enabled field
-            val enabledParam = ParameterSpec.builder("enabled", Boolean::class)
-                .addAnnotation(
-                    AnnotationSpec.builder(serialNameClass)
-                        .addMember("%S", "enabled")
-                        .build()
-                )
-                .build()
-            ctorBuilder.addParameter(enabledParam)
-            props.add(
-                PropertySpec.builder("enabled", Boolean::class)
-                    .initializer("enabled")
+            val dtoType = ClassName(packageName, feature.dtoName).copy(nullable = true)
+            val fieldName = feature.featureName.replaceFirstChar { it.lowercase() }
+            
+            dtoCtorBuilder.addParameter(fieldName, dtoType)
+            dtoProperties.add(
+                PropertySpec.builder(fieldName, dtoType)
+                    .initializer(fieldName)
                     .build()
             )
-
-            // payload fields
-            feature.payloadFields.forEach { field ->
-                val param = ParameterSpec.builder(field.name, field.typeName)
-                    .addAnnotation(
-                        AnnotationSpec.builder(serialNameClass)
-                            .addMember("%S", field.name)
-                            .build()
-                    )
-                    .build()
-                ctorBuilder.addParameter(param)
-                props.add(
-                    PropertySpec.builder(field.name, field.typeName)
-                        .initializer(field.name)
-                        .build()
-                )
-            }
-
-            val dtoType = TypeSpec.classBuilder(dtoName)
-                .addAnnotation(Serializable::class)
-                .addModifiers(KModifier.DATA)
-                .primaryConstructor(ctorBuilder.build())
-                .apply {
-                    props.forEach { addProperty(it) }
-                }
-                .build()
-
-            val file = FileSpec.builder(pkg, dtoName)
-                .addType(dtoType)
-                .build()
-
-            val deps = Dependencies(aggregating = false, feature.containingFile)
-            file.writeTo(codeGenerator, deps)
         }
-    }
 
-    // endregion
+        appConfigDtoBuilder.primaryConstructor(dtoCtorBuilder.build())
+        dtoProperties.forEach { appConfigDtoBuilder.addProperty(it) }
 
-    // region Domain models
+        // AppConfig (non-null)
+        val appConfigBuilder = TypeSpec.classBuilder("AppConfig")
+            .addModifiers(KModifier.DATA)
 
-    private fun generateFeatureDomainModels(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
+        val configCtorBuilder = FunSpec.constructorBuilder()
+        val configProperties = mutableListOf<PropertySpec>()
+
         features.forEach { feature ->
-            val className = feature.domainName
-
-            val ctorBuilder = FunSpec.constructorBuilder()
-            val props = mutableListOf<PropertySpec>()
-
-            // enabled field
-            val enabledParam = ParameterSpec.builder("enabled", Boolean::class).build()
-            ctorBuilder.addParameter(enabledParam)
-            props.add(
-                PropertySpec.builder("enabled", Boolean::class)
-                    .initializer("enabled")
+            val domainType = ClassName(packageName, feature.domainName)
+            val fieldName = feature.featureName.replaceFirstChar { it.lowercase() }
+            
+            configCtorBuilder.addParameter(fieldName, domainType)
+            configProperties.add(
+                PropertySpec.builder(fieldName, domainType)
+                    .initializer(fieldName)
                     .build()
             )
-
-            // payload fields
-            feature.payloadFields.forEach { field ->
-                val param = ParameterSpec.builder(field.name, field.typeName).build()
-                ctorBuilder.addParameter(param)
-                props.add(
-                    PropertySpec.builder(field.name, field.typeName)
-                        .initializer(field.name)
-                        .build()
-                )
-            }
-
-            val type = TypeSpec.classBuilder(className)
-                .addModifiers(KModifier.DATA)
-                .primaryConstructor(ctorBuilder.build())
-                .apply {
-                    props.forEach { addProperty(it) }
-                }
-                .build()
-
-            val file = FileSpec.builder(pkg, className)
-                .addType(type)
-                .build()
-
-            val deps = Dependencies(aggregating = false, feature.containingFile)
-            file.writeTo(codeGenerator, deps)
         }
+
+        appConfigBuilder.primaryConstructor(configCtorBuilder.build())
+        configProperties.forEach { appConfigBuilder.addProperty(it) }
+
+        // Write files
+        val dtoFile = FileSpec.builder(packageName, "AppConfigDto")
+            .addType(appConfigDtoBuilder.build())
+            .build()
+
+        val configFile = FileSpec.builder(packageName, "AppConfig")
+            .addType(appConfigBuilder.build())
+            .build()
+
+        val deps = Dependencies(true, *features.map { it.containingFile }.toTypedArray())
+        dtoFile.writeTo(codeGenerator, deps)
+        configFile.writeTo(codeGenerator, deps)
     }
 
-    // endregion
+    private fun generateMappers(packageName: String, features: List<FeatureMeta>) {
+        val fileBuilder = FileSpec.builder(packageName, "FeatureToggleMappers")
 
-    // region AppConfig / AppConfigDto
-
-    private fun generateAppConfig(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
-        val serialNameClass = ClassName("kotlinx.serialization", "SerialName")
-
-        // AppConfigDto
-        run {
-            val ctorBuilder = FunSpec.constructorBuilder()
-            val props = mutableListOf<PropertySpec>()
-
-            features.forEach { feature ->
-                val dtoType = ClassName(pkg, feature.dtoName)
-                val propertyName = feature.key // use key as field name: pureCompose, safetyChat
-
-                val param = ParameterSpec.builder(propertyName, dtoType)
-                    .addAnnotation(
-                        AnnotationSpec.builder(serialNameClass)
-                            .addMember("%S", feature.key)
-                            .build()
-                    )
-                    .build()
-                ctorBuilder.addParameter(param)
-                props.add(
-                    PropertySpec.builder(propertyName, dtoType)
-                        .initializer(propertyName)
-                        .build()
-                )
-            }
-
-            val type = TypeSpec.classBuilder("AppConfigDto")
-                .addAnnotation(Serializable::class)
-                .addModifiers(KModifier.DATA)
-                .primaryConstructor(ctorBuilder.build())
-                .apply {
-                    props.forEach { addProperty(it) }
-                }
-                .build()
-
-            val file = FileSpec.builder(pkg, "AppConfigDto")
-                .addType(type)
-                .build()
-
-            val deps = Dependencies(
-                aggregating = true,
-                *features.map { it.containingFile }.toTypedArray()
-            )
-            file.writeTo(codeGenerator, deps)
-        }
-
-        // AppConfig (domain)
-        run {
-            val ctorBuilder = FunSpec.constructorBuilder()
-            val props = mutableListOf<PropertySpec>()
-
-            features.forEach { feature ->
-                val domainType = ClassName(pkg, feature.domainName)
-                val propertyName = feature.key
-
-                val param = ParameterSpec.builder(propertyName, domainType).build()
-                ctorBuilder.addParameter(param)
-                props.add(
-                    PropertySpec.builder(propertyName, domainType)
-                        .initializer(propertyName)
-                        .build()
-                )
-            }
-
-            val type = TypeSpec.classBuilder("AppConfig")
-                .addModifiers(KModifier.DATA)
-                .primaryConstructor(ctorBuilder.build())
-                .apply {
-                    props.forEach { addProperty(it) }
-                }
-                .build()
-
-            val file = FileSpec.builder(pkg, "AppConfig")
-                .addType(type)
-                .build()
-
-            val deps = Dependencies(
-                aggregating = true,
-                *features.map { it.containingFile }.toTypedArray()
-            )
-            file.writeTo(codeGenerator, deps)
-        }
-    }
-
-    // endregion
-
-    // region Mappers
-
-    private fun generateMappers(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
-        val appConfigDto = ClassName(pkg, "AppConfigDto")
-        val appConfig = ClassName(pkg, "AppConfig")
-
-        val fileBuilder = FileSpec.builder(pkg, "FeatureToggleMappers")
-//            .addKdoc(
-//                "Generated mappers for feature toggles.\n" +
-//                        "Do not edit manually.\n"
-//            )
-
-        // Per-feature mappers
+        // Individual feature mappers
         features.forEach { feature ->
-            val dtoType = ClassName(pkg, feature.dtoName)
-            val domainType = ClassName(pkg, feature.domainName)
-
-            val funSpec = FunSpec.builder("toDomain")
-                .receiver(dtoType)
-                .returns(domainType)
-                .addStatement(
-                    "return %T(" +
-                            buildString {
-                                append("enabled = enabled")
-                                feature.payloadFields.forEach { field ->
-                                    append(", ${field.name} = ${field.name}")
-                                }
-                            } +
-                            ")",
-                    domainType
-                )
-                .build()
-
-            fileBuilder.addFunction(funSpec)
-        }
-
-        // AppConfigDto -> AppConfig
-        run {
-            val funSpec = FunSpec.builder("toDomain")
-                .receiver(appConfigDto)
-                .returns(appConfig)
-
-            val argsJoined = features.joinToString(", ") { feature ->
-                val propertyName = feature.key
-                "$propertyName = $propertyName.toDomain()"
+            val mapper = CodeGenerators.generateMapper(feature, packageName)
+            fileBuilder.addFunction(mapper)
+            
+            // Nested mappers
+            feature.nestedConfigs.forEach { nested ->
+                val nestedMapper = CodeGenerators.generateNestedMapper(nested, packageName, feature.dtoName)
+                fileBuilder.addFunction(nestedMapper)
             }
-
-            funSpec.addStatement("return %T($argsJoined)", appConfig)
-
-            fileBuilder.addFunction(funSpec.build())
         }
 
-        val deps = Dependencies(
-            aggregating = true,
-            *features.map { it.containingFile }.toTypedArray()
-        )
+        // AppConfigDto -> AppConfig mapper
+        val appConfigMapper = generateAppConfigMapper(packageName, features)
+        fileBuilder.addFunction(appConfigMapper)
+
+        val deps = Dependencies(true, *features.map { it.containingFile }.toTypedArray())
         fileBuilder.build().writeTo(codeGenerator, deps)
     }
 
-    private fun generateUseCases(
-        pkg: String,
-        features: List<FeatureMeta>
-    ) {
+    private fun generateAppConfigMapper(packageName: String, features: List<FeatureMeta>): FunSpec {
+        val appConfigDto = ClassName(packageName, "AppConfigDto")
+        val appConfig = ClassName(packageName, "AppConfig")
 
-        // Per-feature usecases
-        features.forEach { feature ->
-            val useCaseName = "Is${feature.domainName}EnabledUseCase"
-            val fileBuilder = FileSpec.builder(pkg, useCaseName)
-
-            val funSpec = FunSpec.builder("execute")
-                .returns(Boolean::class)
-                .addCode(
-                    CodeBlock.of(
-                        """
-                        |val isRemoteFeatureToggleEnabled =
-                        |    enabledFeaturesDataStore.latestFetchedEnabledFeatures?.${feature.key}?.enabled ?: false
-                        |val isLocalFeatureToggleEnabled = isFeatureEnabled(FeatureToggles.${feature.enumName})
-                        |
-                        |return isLocalFeatureToggleEnabled && isRemoteFeatureToggleEnabled
-                        """.trimMargin(),
-                    )
-                )
-                .build()
-
-            val classSpec = TypeSpec.classBuilder(useCaseName)
-                .primaryConstructor(
-                    FunSpec.constructorBuilder()
-                        .addParameter("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
-                        .build()
-                )
-                .addProperty(
-                    PropertySpec.builder("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
-                        .initializer("enabledFeaturesDataStore")
-                        .build()
-                )
-                .addFunction(funSpec)
-                .build()
-
-            fileBuilder.addType(classSpec)
-
-            val deps = Dependencies(
-                aggregating = true,
-                *features.map { it.containingFile }.toTypedArray()
-            )
-            fileBuilder.build().writeTo(codeGenerator, deps)
+        val mappingArgs = features.joinToString(",\n        ") { feature ->
+            val fieldName = feature.featureName.replaceFirstChar { it.lowercase() }
+            "$fieldName = $fieldName.to${feature.domainName}()"
         }
 
-        features.forEach { feature ->
-            val useCaseName = "Get${feature.domainName}UseCase"
-            val fileBuilder = FileSpec.builder(pkg, useCaseName)
-
-            val funSpec = FunSpec.builder("execute")
-                .returns(ClassName("", feature.domainName).copy(nullable = true))
-                .addStatement(
-                    "return enabledFeaturesDataStore.latestFetchedEnabledFeatures?.${feature.key}"
+        return FunSpec.builder("toDomain")
+            .receiver(appConfigDto)
+            .returns(appConfig)
+            .addStatement(
+                """
+                return AppConfig(
+                    $mappingArgs
                 )
-                .build()
-
-            val classSpec = TypeSpec.classBuilder(useCaseName)
-                .primaryConstructor(
-                    FunSpec.constructorBuilder()
-                        .addParameter("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
-                        .build()
-                )
-                .addProperty(
-                    PropertySpec.builder("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
-                        .initializer("enabledFeaturesDataStore")
-                        .build()
-                )
-                .addFunction(funSpec)
-                .build()
-
-            fileBuilder.addType(classSpec)
-
-            val deps = Dependencies(
-                aggregating = true,
-                *features.map { it.containingFile }.toTypedArray()
+                """.trimIndent()
             )
-            fileBuilder.build().writeTo(codeGenerator, deps)
-        }
-
+            .build()
     }
-    // endregion
 }

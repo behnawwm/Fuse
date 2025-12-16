@@ -1,9 +1,9 @@
 interface EnabledFeaturesDataStore {
-    //    fun updateEnableFeatures(enableFeatures: EnabledFeatures)
-//    fun enableFeaturesFlow(): Flow<EnabledFeatures>
     val latestFetchedEnabledFeatures: AppConfig?
 }
 
 fun isFeatureEnabled(vararg featureToggles: FeatureToggles): Boolean {
-    return featureToggles.all { it.enabled() }
+    // This is a placeholder implementation
+    // In real usage, you would check against your configuration
+    return true
 }

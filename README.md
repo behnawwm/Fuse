@@ -3,7 +3,7 @@ PROJECT CONTEXT: Tapsi Feature Toggle & Config KSP Processor
 
 GOAL
 ----
-Build a Kotlin Symbol Processing (KSP)–based “config compiler” that:
+Build a Kotlin Symbol Processing (KSP)–based "config compiler" that:
 - Treats annotated classes as schema + defaults
 - Generates nullable DTOs (network-facing)
 - Generates non-nullable domain models (app-facing)
@@ -18,8 +18,8 @@ This system replaces ad-hoc feature toggles with a typed, generated configuratio
 
 ----------------------------------------------------------------
 
-ANNOTATION ROLE
----------------
+ANNOTATION ROLE (METADATA ONLY)
+-------------------------------
 The annotation (TapsiFeatureToggle) is METADATA ONLY.
 
 Responsibilities:
@@ -33,17 +33,21 @@ The annotation MUST NOT:
 - Contain business logic
 - Contain backend keys
 
-Example (conceptual):
+Example:
 
+```kotlin
 @TapsiFeatureToggle(
-  title = "Smooth Zoom",
-  dtoName?, domainName?, enumName?
+    title = "Smooth Zoom",
+    dtoName = "SmoothZoomConfigDto",    // Optional
+    domainName = "SmoothZoomConfig",    // Optional
+    enumName = "SmoothZoom"             // Optional
 )
+```
 
 ----------------------------------------------------------------
 
-ANNOTATED CLASS (CRITICAL)
--------------------------
+ANNOTATED CLASS (SINGLE SOURCE OF TRUTH)
+----------------------------------------
 The annotated class is the SINGLE SOURCE OF TRUTH.
 
 It represents:
@@ -54,7 +58,7 @@ It represents:
 
 Rules for annotated class:
 1. Must be a data class
-2. Must define an `enabled: Boolean` property
+2. Must define an `enabled: Boolean` property with default
 3. Every property MUST have a default value
 4. No nullable types allowed in schema
 5. Nested configs must be inner data classes
@@ -62,8 +66,9 @@ Rules for annotated class:
 
 Canonical example:
 
+```kotlin
 @TapsiFeatureToggle(title = "Smooth Zoom")
-data class SmoothZoom(
+data class SmoothZoomFeatureToggle(
     val enabled: Boolean = false,
     val zoom1: Double = 1.0,
     val zoom2: Zoom = Zoom()
@@ -73,6 +78,7 @@ data class SmoothZoom(
         val zoom4: Double = 0.0
     )
 }
+```
 
 ----------------------------------------------------------------
 
@@ -111,8 +117,8 @@ For each annotated schema, KSP generates:
 
 ----------------------------------------------------------------
 
-DTO GENERATION RULES
--------------------
+DTO GENERATION RULES (IMPLEMENTED)
+---------------------------------
 - All fields nullable
 - No default values
 - Annotated with @Serializable
@@ -121,6 +127,7 @@ DTO GENERATION RULES
 
 Example:
 
+```kotlin
 @Serializable
 data class SmoothZoomConfigDto(
     val enabled: Boolean?,
@@ -133,17 +140,19 @@ data class SmoothZoomConfigDto(
         val zoom4: Double?
     )
 }
+```
 
 ----------------------------------------------------------------
 
-DOMAIN MODEL RULES
------------------
+DOMAIN MODEL RULES (IMPLEMENTED)
+-------------------------------
 - All fields non-nullable
 - Safe for direct app usage
 - Contains a single source of defaults
 
 Example:
 
+```kotlin
 data class SmoothZoomConfig(
     val enabled: Boolean,
     val zoom1: Double,
@@ -157,9 +166,11 @@ data class SmoothZoomConfig(
         )
     }
 }
+```
 
 Nested domain models are TOP-LEVEL classes:
 
+```kotlin
 data class ZoomConfig(
     val zoom3: Double,
     val zoom4: Double
@@ -171,11 +182,12 @@ data class ZoomConfig(
         )
     }
 }
+```
 
 ----------------------------------------------------------------
 
-MAPPER RULES (CRITICAL)
-----------------------
+MAPPER RULES (IMPLEMENTED)
+-------------------------
 Mappers form the ONLY null-handling boundary.
 
 Rules:
@@ -187,6 +199,7 @@ Rules:
 
 Example:
 
+```kotlin
 fun SmoothZoomConfigDto?.toSmoothZoomConfig(): SmoothZoomConfig =
     this?.let {
         SmoothZoomConfig(
@@ -195,9 +208,11 @@ fun SmoothZoomConfigDto?.toSmoothZoomConfig(): SmoothZoomConfig =
             zoom2  = it.zoom2.toZoomConfig()
         )
     } ?: SmoothZoomConfig.default
+```
 
 Nested mapper:
 
+```kotlin
 fun SmoothZoomConfigDto.ZoomConfigDto?.toZoomConfig(): ZoomConfig =
     this?.let {
         ZoomConfig(
@@ -205,11 +220,12 @@ fun SmoothZoomConfigDto.ZoomConfigDto?.toZoomConfig(): ZoomConfig =
             zoom4 = it.zoom4 ?: ZoomConfig.default.zoom4
         )
     } ?: ZoomConfig.default
+```
 
 ----------------------------------------------------------------
 
-FEATURE ENUM
-------------
+FEATURE ENUM (IMPLEMENTED)
+-------------------------
 FeatureToggles enum is metadata only.
 
 - No backend keys
@@ -218,16 +234,20 @@ FeatureToggles enum is metadata only.
 
 Example:
 
+```kotlin
 enum class FeatureToggles(
     val title: String
 ) {
-    SmoothZoom("Smooth Zoom")
+    SmoothZoom("Smooth Zoom"),
+    PureCompose("Pure Compose"),
+    SafetyChat("Safety Chat")
 }
+```
 
 ----------------------------------------------------------------
 
-APPCONFIG
----------
+APPCONFIG (IMPLEMENTED)
+----------------------
 AppConfigDto (network-facing):
 - Feature DTOs are nullable
 
@@ -238,25 +258,35 @@ Mapping applies defaults automatically.
 
 Example:
 
+```kotlin
 data class AppConfigDto(
-    val smoothZoom: SmoothZoomConfigDto?
+    val smoothZoom: SmoothZoomConfigDto?,
+    val pureCompose: PureComposeConfigDto?,
+    val safetyChat: SafetyChatConfigDto?
 )
 
 data class AppConfig(
-    val smoothZoom: SmoothZoomConfig
+    val smoothZoom: SmoothZoomConfig,
+    val pureCompose: PureComposeConfig,
+    val safetyChat: SafetyChatConfig
 )
+```
 
 Mapping:
 
+```kotlin
 fun AppConfigDto.toDomain(): AppConfig =
     AppConfig(
-        smoothZoom = smoothZoom.toSmoothZoomConfig()
+        smoothZoom = smoothZoom.toSmoothZoomConfig(),
+        pureCompose = pureCompose.toPureComposeConfig(),
+        safetyChat = safetyChat.toSafetyChatConfig()
     )
+```
 
 ----------------------------------------------------------------
 
-NESTED CONFIG SUPPORT
---------------------
+NESTED CONFIG SUPPORT (IMPLEMENTED)
+----------------------------------
 Nested schemas are handled recursively.
 
 Mechanism:
@@ -271,59 +301,137 @@ Supports unlimited depth.
 
 ----------------------------------------------------------------
 
-PROCESSOR RESPONSIBILITIES SUMMARY
+PROCESSOR ARCHITECTURE (REFACTORED)
 ----------------------------------
-The KSP processor must:
+The KSP processor follows best practices:
 
-- Treat annotated class as schema + defaults
-- Extract:
-  - field names
-  - types
-  - default values
-  - nesting structure
-- Generate:
-  - nullable DTOs
-  - non-null domain models
-  - domain defaults
-  - null-safe mappers
-  - nested DTOs
-- Enforce:
-  - presence of `enabled`
-  - presence of defaults
-- Never invent defaults
-- Never trust backend nullability
-- Never duplicate default values
+**Core Components:**
+- `TapsiFeatureToggleProcessor`: Main processor orchestration
+- `KspUtils`: Symbol processing utilities and validation
+- `CodeGenerators`: Code generation logic
+- `FeatureModels`: Data models for processing
 
-This makes the processor a CONFIG COMPILER.
+**Processing Flow:**
+1. Validate annotated classes (data class, enabled field, defaults)
+2. Extract feature metadata and nested configurations
+3. Generate individual files (DTOs, domains, nested domains)
+4. Generate aggregate files (enum, app configs, mappers)
+
+**Key Improvements:**
+- Proper nested type resolution
+- Centralized validation logic
+- Modular code generation
+- Better error handling and logging
+- Deterministic output
 
 ----------------------------------------------------------------
 
-NON-GOALS (INTENTIONALLY EXCLUDED)
----------------------------------
-- Business logic in annotation
-- Default values in DTO
-- Nullable domain models
-- Manual mapping
-- Runtime null checks
-- Backend key ownership
-- Feature enablement logic inside enum
+PROCESSOR RESPONSIBILITIES SUMMARY
+----------------------------------
+The KSP processor:
+
+- Treats annotated class as schema + defaults ✅
+- Extracts:
+  - field names ✅
+  - types ✅
+  - default values ✅
+  - nesting structure ✅
+- Generates:
+  - nullable DTOs ✅
+  - non-null domain models ✅
+  - domain defaults ✅
+  - null-safe mappers ✅
+  - nested DTOs ✅
+- Enforces:
+  - presence of `enabled` ✅
+  - presence of defaults ✅
+- Never invents defaults ✅
+- Never trusts backend nullability ✅
+- Never duplicates default values ✅
+
+This makes the processor a true CONFIG COMPILER.
+
+----------------------------------------------------------------
+
+USAGE EXAMPLES
+--------------
+
+**Simple Feature:**
+```kotlin
+@TapsiFeatureToggle(title = "Pure Compose")
+data class PureComposeFeatureToggle(
+    val enabled: Boolean = false
+)
+```
+
+**Complex Feature with Nested Config:**
+```kotlin
+@TapsiFeatureToggle(title = "Smooth Zoom")
+data class SmoothZoomFeatureToggle(
+    val enabled: Boolean = false,
+    val zoom1: Double = 1.0,
+    val zoom2: Zoom = Zoom()
+) {
+    data class Zoom(
+        val zoom3: Double = 0.0,
+        val zoom4: Double = 0.0
+    )
+}
+```
+
+**Feature with Custom Naming:**
+```kotlin
+@TapsiFeatureToggle(
+    title = "Safety Chat",
+    dtoName = "SafetyChatConfigDto",
+    domainName = "SafetyChatConfig",
+    enumName = "SafetyChat"
+)
+data class SafetyChatFeatureToggle(
+    val enabled: Boolean = true,
+    val maxMessages: Int = 100,
+    val timeout: Long = 5000L
+)
+```
+
+----------------------------------------------------------------
+
+BUILD INTEGRATION
+----------------
+The processor is integrated as a KSP plugin:
+
+```kotlin
+// In build.gradle.kts
+plugins {
+    id("com.google.devtools.ksp")
+}
+
+dependencies {
+    implementation(project(":tapsi-featuretoggle-annotations"))
+    ksp(project(":tapsi-featuretoggle-processor"))
+}
+```
+
+Generated files are placed in `build/generated/ksp/main/kotlin/`
 
 ----------------------------------------------------------------
 
 FINAL INVARIANTS CHECKLIST
 -------------------------
-- Annotated class defines all defaults ✔
-- Enabled state is explicit ✔
-- DTOs are nullable ✔
-- Domain is non-null ✔
-- Defaults are centralized ✔
-- Nested configs work ✔
-- No ambiguous imports ✔
-- Deterministic output ✔
-- Scales to large codebases ✔
+- Annotated class defines all defaults ✅
+- Enabled state is explicit ✅
+- DTOs are nullable ✅
+- Domain is non-null ✅
+- Defaults are centralized ✅
+- Nested configs work ✅
+- No ambiguous imports ✅
+- Deterministic output ✅
+- Scales to large codebases ✅
+- Follows KSP best practices ✅
+- Proper error handling ✅
+- Modular architecture ✅
 
 ----------------------------------------------------------------
 
-END OF CONTEXT
+END OF SPECIFICATION
 ============================================================
-

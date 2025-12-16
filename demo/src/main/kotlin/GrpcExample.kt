@@ -6,12 +6,12 @@ import mamad.v1.StringResponse
 //@TapsiGrpc
 //interface MamadGrpc {
 //
-////    @TapsiGrpcEndpoint(MamadServiceClient)
+//    @TapsiGrpcEndpoint("",)
 //    suspend fun <T : Any> functionNameMamad(request: T): Result<StringResponse>
 //
 //}
 
-
+//
 //class MamadGrpcImpl(
 //    grpcClient: GrpcClient
 //) : MamadGrpc {
