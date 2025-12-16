@@ -1,4 +1,4 @@
-PROJECT CONTEXT: Tapsi Feature Toggle & Config KSP Processor
+PROJECT CONTEXT: Fuse - Feature Toggle & Config KSP Processor
 ============================================================
 
 GOAL
@@ -25,11 +25,10 @@ The annotation (TapsiFeatureToggle) is METADATA ONLY.
 Responsibilities:
 - Feature discovery
 - Title (human-readable)
+- Default enabled state
 - Optional naming overrides
 
 The annotation MUST NOT:
-- Contain defaults
-- Contain enabled state
 - Contain business logic
 - Contain backend keys
 
@@ -38,6 +37,7 @@ Example:
 ```kotlin
 @TapsiFeatureToggle(
     title = "Smooth Zoom",
+    defaultEnabled = false,
     dtoName = "SmoothZoomConfigDto",    // Optional
     domainName = "SmoothZoomConfig",    // Optional
     enumName = "SmoothZoom"             // Optional
@@ -407,8 +407,8 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":tapsi-featuretoggle-annotations"))
-    ksp(project(":tapsi-featuretoggle-processor"))
+    implementation(project(":fuse-annotations"))
+    ksp(project(":fuse-processor"))
 }
 ```
 
