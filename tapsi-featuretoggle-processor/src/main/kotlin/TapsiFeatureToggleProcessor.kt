@@ -114,6 +114,7 @@ class TapsiFeatureToggleProcessor(
         generateFeatureEnum(packageName, features)
         generateAppConfig(packageName, features)
         generateMappers(packageName, features)
+        generateFixtures(packageName, features)
     }
 
     private fun generateFeatureDto(packageName: String, feature: FeatureMeta) {
@@ -282,5 +283,16 @@ class TapsiFeatureToggleProcessor(
                 """.trimIndent()
             )
             .build()
+    }
+
+    private fun generateFixtures(packageName: String, features: List<FeatureMeta>) {
+        val fixturesObject = CodeGenerators.generateFixtures(packageName, features)
+        
+        val file = FileSpec.builder(packageName, "Fixtures")
+            .addType(fixturesObject)
+            .build()
+
+        val deps = Dependencies(true, *features.map { it.containingFile }.toTypedArray())
+        file.writeTo(codeGenerator, deps)
     }
 }

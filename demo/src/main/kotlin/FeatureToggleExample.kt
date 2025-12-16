@@ -29,7 +29,7 @@ data class AdvancedCameraFeatureToggle(
 @TapsiFeatureToggle(
     title = "Push Notifications",
     dtoName = "NotificationConfigDto",
-    domainName = "NotificationConfig", 
+    domainName = "NotificationConfig",
     enumName = "PushNotifications"
 )
 data class PushNotificationFeatureToggle(

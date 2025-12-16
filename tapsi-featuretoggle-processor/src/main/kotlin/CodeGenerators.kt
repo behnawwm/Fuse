@@ -1,5 +1,6 @@
 import com.squareup.kotlinpoet.*
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 object CodeGenerators {
     
@@ -9,13 +10,20 @@ object CodeGenerators {
         
         feature.fields.forEach { field ->
             val fieldType = if (isNestedType(field, feature)) {
-                // For nested types, use the nested DTO type as inner class
                 ClassName("", "${getSimpleTypeName(field.typeName)}ConfigDto").copy(nullable = true)
             } else {
                 field.typeName.copy(nullable = true)
             }
             
-            ctorBuilder.addParameter(field.name, fieldType)
+            val param = ParameterSpec.builder(field.name, fieldType)
+                .addAnnotation(
+                    AnnotationSpec.builder(SerialName::class)
+                        .addMember("%S", field.name)
+                        .build()
+                )
+                .build()
+            
+            ctorBuilder.addParameter(param)
             properties.add(
                 PropertySpec.builder(field.name, fieldType)
                     .initializer(field.name)
@@ -45,7 +53,16 @@ object CodeGenerators {
         
         nested.fields.forEach { field ->
             val nullableType = field.typeName.copy(nullable = true)
-            ctorBuilder.addParameter(field.name, nullableType)
+            
+            val param = ParameterSpec.builder(field.name, nullableType)
+                .addAnnotation(
+                    AnnotationSpec.builder(SerialName::class)
+                        .addMember("%S", field.name)
+                        .build()
+                )
+                .build()
+            
+            ctorBuilder.addParameter(param)
             properties.add(
                 PropertySpec.builder(field.name, nullableType)
                     .initializer(field.name)
@@ -69,7 +86,6 @@ object CodeGenerators {
         
         feature.fields.forEach { field ->
             val fieldType = if (isNestedType(field, feature)) {
-                // For nested types, use the domain config type
                 ClassName("", "${getSimpleTypeName(field.typeName)}Config")
             } else {
                 field.typeName
@@ -195,5 +211,177 @@ object CodeGenerators {
                 """.trimIndent()
             )
             .build()
+    }
+    
+    fun generateFixtures(packageName: String, features: List<FeatureMeta>): TypeSpec {
+        val objectBuilder = TypeSpec.objectBuilder("Fixtures")
+            .addKdoc("Generated fixtures for testing and development")
+        
+        // Generate nested fixtures first (so they can be referenced)
+        features.forEach { feature ->
+            feature.nestedConfigs.forEach { nested ->
+                val nestedDtoFixture = generateNestedDtoFixture(nested, feature, packageName)
+                objectBuilder.addProperty(nestedDtoFixture)
+                
+                val nestedDomainFixture = generateNestedDomainFixture(nested, packageName)
+                objectBuilder.addProperty(nestedDomainFixture)
+            }
+        }
+        
+        // Generate main feature fixtures
+        features.forEach { feature ->
+            val dtoFixture = generateDtoFixture(feature, packageName)
+            objectBuilder.addProperty(dtoFixture)
+            
+            val domainFixture = generateDomainFixture(feature, packageName)
+            objectBuilder.addProperty(domainFixture)
+        }
+        
+        // Generate AppConfig fixtures
+        val appConfigDtoFixture = generateAppConfigDtoFixture(features, packageName)
+        objectBuilder.addProperty(appConfigDtoFixture)
+        
+        val appConfigFixture = generateAppConfigFixture(features, packageName)
+        objectBuilder.addProperty(appConfigFixture)
+        
+        return objectBuilder.build()
+    }
+    
+    private fun generateDtoFixture(feature: FeatureMeta, packageName: String): PropertySpec {
+        val dtoType = ClassName(packageName, feature.dtoName)
+        val fixtureName = "${feature.featureName.replaceFirstChar { it.lowercase() }}ConfigDtoFixture"
+        
+        val args = feature.fields.joinToString(",\n        ") { field ->
+            "${field.name} = ${generateFixtureValue(field, feature, true)}"
+        }
+        
+        return PropertySpec.builder(fixtureName, dtoType)
+            .initializer(
+                """
+                ${feature.dtoName}(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateDomainFixture(feature: FeatureMeta, packageName: String): PropertySpec {
+        val domainType = ClassName(packageName, feature.domainName)
+        val fixtureName = "${feature.featureName.replaceFirstChar { it.lowercase() }}ConfigFixture"
+        
+        val args = feature.fields.joinToString(",\n        ") { field ->
+            "${field.name} = ${generateFixtureValue(field, feature, false)}"
+        }
+        
+        return PropertySpec.builder(fixtureName, domainType)
+            .initializer(
+                """
+                ${feature.domainName}(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateNestedDtoFixture(nested: NestedConfig, feature: FeatureMeta, packageName: String): PropertySpec {
+        val dtoType = ClassName(packageName, "${feature.dtoName}.${nested.className}ConfigDto")
+        val fixtureName = "${nested.className.replaceFirstChar { it.lowercase() }}ConfigDtoFixture"
+        
+        val args = nested.fields.joinToString(",\n        ") { field ->
+            "${field.name} = ${generateSimpleFixtureValue(field, true)}"
+        }
+        
+        return PropertySpec.builder(fixtureName, dtoType)
+            .initializer(
+                """
+                ${feature.dtoName}.${nested.className}ConfigDto(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateNestedDomainFixture(nested: NestedConfig, packageName: String): PropertySpec {
+        val domainType = ClassName(packageName, "${nested.className}Config")
+        val fixtureName = "${nested.className.replaceFirstChar { it.lowercase() }}ConfigFixture"
+        
+        val args = nested.fields.joinToString(",\n        ") { field ->
+            "${field.name} = ${generateSimpleFixtureValue(field, false)}"
+        }
+        
+        return PropertySpec.builder(fixtureName, domainType)
+            .initializer(
+                """
+                ${nested.className}Config(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateAppConfigDtoFixture(features: List<FeatureMeta>, packageName: String): PropertySpec {
+        val appConfigDtoType = ClassName(packageName, "AppConfigDto")
+        
+        val args = features.joinToString(",\n        ") { feature ->
+            val fieldName = feature.featureName.replaceFirstChar { it.lowercase() }
+            val fixtureName = "${fieldName}ConfigDtoFixture"
+            "$fieldName = $fixtureName"
+        }
+        
+        return PropertySpec.builder("appConfigDtoFixture", appConfigDtoType)
+            .initializer(
+                """
+                AppConfigDto(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateAppConfigFixture(features: List<FeatureMeta>, packageName: String): PropertySpec {
+        val appConfigType = ClassName(packageName, "AppConfig")
+        
+        val args = features.joinToString(",\n        ") { feature ->
+            val fieldName = feature.featureName.replaceFirstChar { it.lowercase() }
+            val fixtureName = "${fieldName}ConfigFixture"
+            "$fieldName = $fixtureName"
+        }
+        
+        return PropertySpec.builder("appConfigFixture", appConfigType)
+            .initializer(
+                """
+                AppConfig(
+                    $args
+                )
+                """.trimIndent()
+            )
+            .build()
+    }
+    
+    private fun generateFixtureValue(field: FeatureField, feature: FeatureMeta, isDto: Boolean): String {
+        return if (isNestedType(field, feature)) {
+            val nestedName = getSimpleTypeName(field.typeName)
+            "${nestedName.replaceFirstChar { it.lowercase() }}Config${if (isDto) "Dto" else ""}Fixture"
+        } else {
+            generateSimpleFixtureValue(field, isDto)
+        }
+    }
+    
+    private fun generateSimpleFixtureValue(field: FeatureField, isDto: Boolean): String {
+        val typeName = field.typeName.toString()
+        return when {
+            typeName.contains("Boolean") -> "true"
+            typeName.contains("String") -> "\"sample_${field.name}\""
+            typeName.contains("Int") -> "42"
+            typeName.contains("Long") -> "1000L"
+            typeName.contains("Double") -> "3.14"
+            typeName.contains("Float") -> "2.5f"
+            else -> "null"
+        }
     }
 }
