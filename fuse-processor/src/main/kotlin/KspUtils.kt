@@ -36,18 +36,18 @@ object KspUtils {
     
     fun validateDataClass(declaration: KSClassDeclaration, logger: KSPLogger): Boolean {
         if (declaration.classKind != ClassKind.CLASS) {
-            logger.error("@TapsiFeatureToggle can only be applied to data classes", declaration)
+            logger.error("@FuseFeatureToggle can only be applied to data classes", declaration)
             return false
         }
         
         if (!declaration.modifiers.contains(Modifier.DATA)) {
-            logger.error("@TapsiFeatureToggle requires a data class", declaration)
+            logger.error("@FuseFeatureToggle requires a data class", declaration)
             return false
         }
         
         val primaryCtor = declaration.primaryConstructor
         if (primaryCtor == null) {
-            logger.error("@TapsiFeatureToggle requires a primary constructor", declaration)
+            logger.error("@FuseFeatureToggle requires a primary constructor", declaration)
             return false
         }
         
@@ -58,7 +58,7 @@ object KspUtils {
         }
         
         if (!hasEnabledField) {
-            logger.error("@TapsiFeatureToggle requires an 'enabled: Boolean' field", declaration)
+            logger.error("@FuseFeatureToggle requires an 'enabled: Boolean' field", declaration)
             return false
         }
         

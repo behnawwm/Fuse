@@ -5,7 +5,7 @@ import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ksp.writeTo
 import kotlinx.serialization.Serializable
 
-class TapsiFeatureToggleProcessor(
+class FuseFeatureToggleProcessor(
     private val environment: SymbolProcessorEnvironment
 ) : SymbolProcessor {
 
@@ -16,7 +16,7 @@ class TapsiFeatureToggleProcessor(
     override fun process(resolver: Resolver): List<KSAnnotated> {
         if (processed) return emptyList()
 
-        val symbols = resolver.getSymbolsWithAnnotation(TapsiFeatureToggle::class.qualifiedName!!)
+        val symbols = resolver.getSymbolsWithAnnotation(FuseFeatureToggle::class.qualifiedName!!)
         val invalidSymbols = symbols.filterNot { it.validate() }.toList()
         val validSymbols = symbols.filter { it.validate() }.toList()
 
@@ -44,7 +44,7 @@ class TapsiFeatureToggleProcessor(
 
         val annotation = declaration.annotations.firstOrNull {
             it.annotationType.resolve().declaration.qualifiedName?.asString() == 
-                TapsiFeatureToggle::class.qualifiedName
+                FuseFeatureToggle::class.qualifiedName
         } ?: return null
 
         val className = declaration.simpleName.asString()
@@ -54,7 +54,7 @@ class TapsiFeatureToggleProcessor(
         val title = annotation.arguments
             .firstOrNull { it.name?.asString() == "title" }
             ?.value as? String ?: run {
-                logger.error("@TapsiFeatureToggle: 'title' is required", declaration)
+                logger.error("@FuseFeatureToggle: 'title' is required", declaration)
                 return null
             }
 

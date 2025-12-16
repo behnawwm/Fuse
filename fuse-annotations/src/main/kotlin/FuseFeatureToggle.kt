@@ -1,6 +1,6 @@
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.SOURCE)
-annotation class TapsiFeatureToggle(
+annotation class FuseFeatureToggle(
     val title: String,
     val defaultEnabled: Boolean,
     val dtoName: String = "",

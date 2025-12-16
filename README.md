@@ -20,7 +20,7 @@ This system replaces ad-hoc feature toggles with a typed, generated configuratio
 
 ANNOTATION ROLE (METADATA ONLY)
 -------------------------------
-The annotation (TapsiFeatureToggle) is METADATA ONLY.
+The annotation (FuseFeatureToggle) is METADATA ONLY.
 
 Responsibilities:
 - Feature discovery
@@ -35,7 +35,7 @@ The annotation MUST NOT:
 Example:
 
 ```kotlin
-@TapsiFeatureToggle(
+@FuseFeatureToggle(
     title = "Smooth Zoom",
     defaultEnabled = false,
     dtoName = "SmoothZoomConfigDto",    // Optional
@@ -67,7 +67,7 @@ Rules for annotated class:
 Canonical example:
 
 ```kotlin
-@TapsiFeatureToggle(title = "Smooth Zoom")
+@FuseFeatureToggle(title = "Smooth Zoom")
 data class SmoothZoomFeatureToggle(
     val enabled: Boolean = false,
     val zoom1: Double = 1.0,
@@ -306,7 +306,7 @@ PROCESSOR ARCHITECTURE (REFACTORED)
 The KSP processor follows best practices:
 
 **Core Components:**
-- `TapsiFeatureToggleProcessor`: Main processor orchestration
+- `FuseFeatureToggleProcessor`: Main processor orchestration
 - `KspUtils`: Symbol processing utilities and validation
 - `CodeGenerators`: Code generation logic
 - `FeatureModels`: Data models for processing
@@ -358,7 +358,7 @@ USAGE EXAMPLES
 
 **Simple Feature:**
 ```kotlin
-@TapsiFeatureToggle(title = "Pure Compose")
+@FuseFeatureToggle(title = "Pure Compose")
 data class PureComposeFeatureToggle(
     val enabled: Boolean = false
 )
@@ -366,7 +366,7 @@ data class PureComposeFeatureToggle(
 
 **Complex Feature with Nested Config:**
 ```kotlin
-@TapsiFeatureToggle(title = "Smooth Zoom")
+@FuseFeatureToggle(title = "Smooth Zoom")
 data class SmoothZoomFeatureToggle(
     val enabled: Boolean = false,
     val zoom1: Double = 1.0,
@@ -381,7 +381,7 @@ data class SmoothZoomFeatureToggle(
 
 **Feature with Custom Naming:**
 ```kotlin
-@TapsiFeatureToggle(
+@FuseFeatureToggle(
     title = "Safety Chat",
     dtoName = "SafetyChatConfigDto",
     domainName = "SafetyChatConfig",

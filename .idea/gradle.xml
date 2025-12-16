@@ -10,10 +10,8 @@
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/demo" />
-            <option value="$PROJECT_DIR$/tapsi-featuretoggle-annotations" />
-            <option value="$PROJECT_DIR$/tapsi-featuretoggle-processor" />
-            <option value="$PROJECT_DIR$/tapsi-grpc-annotations" />
-            <option value="$PROJECT_DIR$/tapsi-grpc-processor" />
+            <option value="$PROJECT_DIR$/fuse-annotations" />
+            <option value="$PROJECT_DIR$/fuse-processor" />
           </set>
         </option>
       </GradleProjectSettings>

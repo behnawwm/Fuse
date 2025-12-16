@@ -1,5 +1,5 @@
 // Complex feature with nested configuration and multiple data types
-@TapsiFeatureToggle(
+@FuseFeatureToggle(
     title = "Advanced Camera Settings",
     defaultEnabled = false
 )
@@ -15,7 +15,7 @@ data class AdvancedCameraFeatureToggle(
 }
 
 // Simple feature with basic configuration
-//@TapsiFeatureToggle(
+//@FuseFeatureToggle(
 //    title = "Push Notifications",
 //    defaultEnabled = true,
 //    dtoName = "NotificationConfigDto",
