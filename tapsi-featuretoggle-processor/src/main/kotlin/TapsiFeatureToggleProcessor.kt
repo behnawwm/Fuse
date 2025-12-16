@@ -14,8 +14,10 @@ import com.squareup.kotlinpoet.ksp.writeTo
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.validate
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.TypeSpec.Companion.enumBuilder
 import com.squareup.kotlinpoet.ksp.toTypeName
@@ -56,6 +58,7 @@ class TapsiFeatureToggleProcessor(
         generateFeatureDomainModels(mainPackage, features)
         generateAppConfig(mainPackage, features)
         generateMappers(mainPackage, features)
+        generateUseCases(mainPackage, features)
 
         processed = true
         return invalidSymbols
@@ -479,8 +482,88 @@ class TapsiFeatureToggleProcessor(
         fileBuilder.build().writeTo(codeGenerator, deps)
     }
 
+    private fun generateUseCases(
+        pkg: String,
+        features: List<FeatureMeta>
+    ) {
+
+        // Per-feature usecases
+        features.forEach { feature ->
+            val useCaseName = "Is${feature.domainName}EnabledUseCase"
+            val fileBuilder = FileSpec.builder(pkg, useCaseName)
+
+            val funSpec = FunSpec.builder("execute")
+                .returns(Boolean::class)
+                .addCode(
+                    CodeBlock.of(
+                        """
+                        |val isRemoteFeatureToggleEnabled =
+                        |    enabledFeaturesDataStore.latestFetchedEnabledFeatures?.${feature.key}?.enabled ?: false
+                        |val isLocalFeatureToggleEnabled = isFeatureEnabled(FeatureToggles.${feature.enumName})
+                        |
+                        |return isLocalFeatureToggleEnabled && isRemoteFeatureToggleEnabled
+                        """.trimMargin(),
+                    )
+                )
+                .build()
+
+            val classSpec = TypeSpec.classBuilder(useCaseName)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
+                        .build()
+                )
+                .addProperty(
+                    PropertySpec.builder("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
+                        .initializer("enabledFeaturesDataStore")
+                        .build()
+                )
+                .addFunction(funSpec)
+                .build()
+
+            fileBuilder.addType(classSpec)
+
+            val deps = Dependencies(
+                aggregating = true,
+                *features.map { it.containingFile }.toTypedArray()
+            )
+            fileBuilder.build().writeTo(codeGenerator, deps)
+        }
+
+        features.forEach { feature ->
+            val useCaseName = "Get${feature.domainName}UseCase"
+            val fileBuilder = FileSpec.builder(pkg, useCaseName)
+
+            val funSpec = FunSpec.builder("execute")
+                .returns(ClassName("", feature.domainName).copy(nullable = true))
+                .addStatement(
+                    "return enabledFeaturesDataStore.latestFetchedEnabledFeatures?.${feature.key}"
+                )
+                .build()
+
+            val classSpec = TypeSpec.classBuilder(useCaseName)
+                .primaryConstructor(
+                    FunSpec.constructorBuilder()
+                        .addParameter("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
+                        .build()
+                )
+                .addProperty(
+                    PropertySpec.builder("enabledFeaturesDataStore", ClassName("", "EnabledFeaturesDataStore"))
+                        .initializer("enabledFeaturesDataStore")
+                        .build()
+                )
+                .addFunction(funSpec)
+                .build()
+
+            fileBuilder.addType(classSpec)
+
+            val deps = Dependencies(
+                aggregating = true,
+                *features.map { it.containingFile }.toTypedArray()
+            )
+            fileBuilder.build().writeTo(codeGenerator, deps)
+        }
+
+    }
     // endregion
 }
-
-
-
